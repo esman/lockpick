@@ -10,12 +10,12 @@
 namespace lcp
 {
 
-template <typename _MutexType, typename _ThreadType>
+template <typename MutexID, typename ThreadID>
 class BasicTree
 {
 public:
-  typedef BasicTree<_MutexType, _ThreadType> Tree;
-  typedef BasicMutex<_MutexType, _ThreadType> Mutex;
+  typedef BasicTree<MutexID, ThreadID> Tree;
+  typedef BasicMutex<MutexID, ThreadID> Mutex;
   explicit BasicTree(const Mutex*);
   void AddBranch(const Tree& branch) { branches_.push_back(branch); }
 
@@ -24,48 +24,49 @@ private:
   std::vector<Tree> branches_;
 };
 
-template <typename _MutexType, typename _ThreadType>
+template <typename MutexID, typename ThreadID>
 class BasicMutex
 {
 public:
-  typedef BasicMutex<_MutexType, _ThreadType> Mutex;
-  typedef BasicDeadlock<_MutexType, _ThreadType> Deadlock;
-  void SetValue(_MutexType value) { value_ = value; }
-  _MutexType Value() const { return value_; }
-  void OnLock(_ThreadType, Mutex*);
-  Mutex* OnUnlock(_ThreadType);
+  typedef BasicMutex<MutexID, ThreadID> Mutex;
+  typedef BasicDeadlock<MutexID, ThreadID> Deadlock;
+  void SetValue(MutexID value) { id_ = value; }
+  MutexID Value() const { return id_; }
+  void OnLock(ThreadID, Mutex*);
+  Mutex* OnUnlock(ThreadID);
 
 private:
   void Link(Mutex*);
-  void CheckTree(const Mutex* mutex) const;
+  typedef std::vector<const Mutex*> Loop;
+  bool FindLoop(const Mutex* mutex, Loop& loop) const;
 
-  _MutexType value_ {};
+  MutexID id_ {};
   bool locked_ {};
   bool recursive_ {};
   int lock_count_ {};
-  _ThreadType owner_;
+  ThreadID owner_;
   Mutex* prev_ {};
   Mutex* next_ {};
 
-  std::map<_ThreadType, std::set<Mutex*>> tree_;
+  std::set<Mutex*> refs_;
 };
 
-template <typename _MutexType, typename _ThreadType>
+template <typename MutexID, typename ThreadID>
 class BasicChecker
 {
 public:
-  typedef BasicMutex<_MutexType, _ThreadType> Mutex;
-  typedef BasicDeadlock<_MutexType, _ThreadType> Deadlock;
-  void OnMutexLock(const _MutexType, const _ThreadType tid);
-  void OnMutexUnlock(const _MutexType, const _ThreadType tid);
+  typedef BasicMutex<MutexID, ThreadID> Mutex;
+  typedef BasicDeadlock<MutexID, ThreadID> Deadlock;
+  void OnMutexLock(const MutexID, const ThreadID tid);
+  void OnMutexUnlock(const MutexID, const ThreadID tid);
 
 private:
-  std::map<_MutexType, Mutex> mutexes_;
-  std::map<_ThreadType, Mutex*> heads_;
+  std::map<MutexID, Mutex> mutexes_;
+  std::map<ThreadID, Mutex*> heads_;
 };
 
-template <typename _MutexType, typename _ThreadType>
-void BasicMutex<_MutexType, _ThreadType>::OnLock(_ThreadType tid, Mutex* head)
+template <typename MutexID, typename ThreadID>
+void BasicMutex<MutexID, ThreadID>::OnLock(ThreadID tid, Mutex* head)
 {
   if(!locked_)
   {
@@ -82,7 +83,6 @@ void BasicMutex<_MutexType, _ThreadType>::OnLock(_ThreadType tid, Mutex* head)
         printf("[WARN] recursive mutex %p\n", this);
         //warn on recursion
       }
-      lock_count_++;
     }
     else
     {
@@ -90,16 +90,16 @@ void BasicMutex<_MutexType, _ThreadType>::OnLock(_ThreadType tid, Mutex* head)
       //error locking already locked mutex
     }
   }
+  lock_count_++;
 
   if(head)
   {
     head->Link(this);
-    CheckTree(head);
   }
 }
 
-template <typename _MutexType, typename _ThreadType>
-BasicMutex<_MutexType, _ThreadType>* BasicMutex<_MutexType, _ThreadType>::OnUnlock(_ThreadType tid)
+template <typename MutexID, typename ThreadID>
+BasicMutex<MutexID, ThreadID>* BasicMutex<MutexID, ThreadID>::OnUnlock(ThreadID tid)
 {
   if(locked_)
   {
@@ -121,6 +121,7 @@ BasicMutex<_MutexType, _ThreadType>* BasicMutex<_MutexType, _ThreadType>::OnUnlo
     printf("[ERROR] unlocking not locked mutex %p\n", this);
     //error unlocking not locked mutex
   }
+  lock_count_--;
 
   if(prev_)
   {
@@ -134,73 +135,99 @@ BasicMutex<_MutexType, _ThreadType>* BasicMutex<_MutexType, _ThreadType>::OnUnlo
   return prev_;
 }
 
-template <typename _MutexType, typename _ThreadType>
-void BasicMutex<_MutexType, _ThreadType>::Link(Mutex* mutex)
+template <typename MutexID, typename ThreadID>
+void BasicMutex<MutexID, ThreadID>::Link(Mutex* mutex)
 {
   next_ = mutex;
   if(next_)
   {
-    printf("link %d to %d. context: %u\n", mutex->value_, value_, owner_);
-    tree_[owner_].insert(next_);
+    printf("link %d to %d. context: %u\n", mutex->id_, id_, owner_);
     next_->prev_ = this;
-  }
-}
 
-template <typename _MutexType, typename _ThreadType>
-void BasicMutex<_MutexType, _ThreadType>::CheckTree(const Mutex* mutex) const
-{
-  for(const auto p: tree_)
-  {
-    if(p.first != mutex->owner_)
+    if(refs_.find(next_) == std::end(refs_))
     {
-      for(const auto m: p.second)
+      refs_.insert(next_);
+
+      Loop loop;
+      if(next_->FindLoop(this, loop))
       {
-        printf("check mutex %d:%d == %d:%d\n", m->value_, p.first, mutex->value_, mutex->owner_);
-        if(m != mutex)
+        loop.push_back(this);
+        printf("!!! Found loop:\n");
+        for(auto const ref: loop)
         {
-          m->CheckTree(mutex);
-        }
-        else
-        {
-          throw Deadlock(this, mutex);
+          printf("!!! --> %d\n", ref->id_);
         }
       }
     }
   }
 }
 
-template <typename _MutexType, typename _ThreadType>
-void BasicChecker<_MutexType, _ThreadType>::OnMutexLock(const _MutexType mutex, const _ThreadType tid)
+template <typename MutexID, typename ThreadID>
+bool BasicMutex<MutexID, ThreadID>::FindLoop(const Mutex* mutex, Loop& loop) const
 {
-  auto& m = mutexes_[mutex];
-  m.SetValue(mutex);
-  auto pair = heads_.find(tid);
-  Mutex* head {};
-
-  if(pair != std::end(heads_))
+  for(const auto ref: refs_)
   {
-    head = pair->second;
-    pair->second = &m;
+    if(ref == mutex || ref->FindLoop(mutex, loop))
+    {
+      loop.push_back(this);
+      return true;
+    }
   }
-  else
-  {
-    heads_[tid] = &m;
-  }
-
-  m.OnLock(tid, head);
+  return false;
 }
 
-template <typename _MutexType, typename _ThreadType>
-void BasicChecker<_MutexType, _ThreadType>::OnMutexUnlock(const _MutexType mutex, const _ThreadType tid)
+template <typename MutexID, typename ThreadID>
+void BasicChecker<MutexID, ThreadID>::OnMutexLock(const MutexID mutex_id, const ThreadID thread_id)
 {
-  auto& m = mutexes_.at(mutex);
-  if(heads_[tid] == &m)
+  Mutex* mutex;
+  Mutex* head {};
+
+  auto mutex_pair = mutexes_.find(mutex_id);
+  if(mutex_pair == std::end(mutexes_))
   {
-    heads_[tid] = m.OnUnlock(tid);
+    mutex = &mutexes_[mutex_id];
+    mutex->SetValue(mutex_id);
   }
   else
   {
-    m.OnUnlock(tid);
+    mutex = &mutex_pair->second;
+  }
+
+  auto thread_pair = heads_.find(thread_id);
+  if(thread_pair != std::end(heads_))
+  {
+    head = thread_pair->second;
+    thread_pair->second = mutex;
+  }
+  else
+  {
+    heads_[thread_id] = mutex;
+  }
+
+  mutex->OnLock(thread_id, head);
+}
+
+template <typename MutexID, typename ThreadID>
+void BasicChecker<MutexID, ThreadID>::OnMutexUnlock(const MutexID mutex_id, const ThreadID thread_id)
+{
+  auto mutex_pair = mutexes_.find(mutex_id);
+  if(mutex_pair != std::end(mutexes_))
+  {
+    auto mutex = &mutex_pair->second;
+
+    auto head_pair = heads_.find(thread_id);
+    if(head_pair != std::end(heads_) && head_pair->second == mutex)
+    {
+      head_pair->second = mutex->OnUnlock(thread_id);
+    }
+    else
+    {
+      mutex->OnUnlock(thread_id);
+    }
+  }
+  else
+  {
+    printf("[ERROR] Unlocking unknown mutex\n");
   }
 }
 
