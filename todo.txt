@@ -1,0 +1,5 @@
+ - Check mutex tree when new relation added
+ - Check loops for independent paths
+ - Check loops in different thread
+ - Filter loops based on their lifetime
+ - Multithread deadlock reporting
