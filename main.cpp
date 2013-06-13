@@ -9,7 +9,6 @@ int main(int argc, char* argv[])
   (void) argv;
 
   typedef lcp::BasicChecker<int, int> Checker;
-//  typedef Checker::Deadlock Deadlock;
 
   try
   {

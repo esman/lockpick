@@ -141,11 +141,11 @@ void BasicMutex<MutexID, ThreadID>::Link(Mutex* mutex)
   next_ = mutex;
   if(next_)
   {
-    printf("link %d to %d. context: %u\n", mutex->id_, id_, owner_);
     next_->prev_ = this;
 
     if(refs_.find(next_) == std::end(refs_))
     {
+      printf("Add ref %d to %d. context: %u\n", next_->id_, id_, owner_);
       refs_.insert(next_);
 
       Loop loop;
