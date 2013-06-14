@@ -31,11 +31,22 @@ int main(int argc, char* argv[])
     c.OnMutexUnlock(A, t1);
 
     c.OnMutexLock(B, t2);
+    c.OnMutexLock(5, t2);
+    c.OnMutexLock(C, t2);
+    c.OnMutexUnlock(C, t2);
+    c.OnMutexUnlock(5, t2);
+    c.OnMutexUnlock(B, t2);
+
+    c.OnMutexLock(B, t2);
     c.OnMutexLock(C, t2);
     c.OnMutexUnlock(C, t2);
     c.OnMutexUnlock(B, t2);
 
     c.OnMutexLock(C, t3);
+    c.OnMutexLock(6, t3);
+    c.OnMutexLock(7, t3);
+    c.OnMutexLock(8, t3);
+    c.OnMutexLock(9, t3);
     c.OnMutexLock(A, t3);
     c.OnMutexUnlock(A, t3);
     c.OnMutexUnlock(C, t3);
